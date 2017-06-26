@@ -1,29 +1,29 @@
-Go语言反射规则 - The Laws of Reflection
+Go语言反射法则 - The Laws of Reflection
 ======================
 
 原文地址：[http://blog.golang.org/laws-of-reflection](http://blog.golang.org/laws-of-reflection)
 
-##介绍
+## 介绍
 
-反射在计算机的概念里是指一段程序审查自身结构的能力，主要通过类型进行审查。它是元编程的一种形式，同样也是引起混乱的重大来源。
+反射在计算机的概念里是指一段程序检查自身结构的能力，主要检查类型。它是元编程的一种形式。同样也是引起困扰的重大来源。
 
-在这篇文章里我们试图阐明Go语言中的反射是如何工作的。每种语言的反射模型是不同的(许多语言不支持反射），然而本文只与Go有关，所以我们接下来所提到的“反射”都是指Go语言中的反射。
+在这篇文章里我们试图阐明Go语言中的反射是如何工作的。每种语言的反射模型是不同的(许多语言压根不支持反射），然而本文只与Go有关，所以我们接下来所提到的“反射”都是指Go语言中的反射。
 
 
-##类型与接口
+## 类型（types）与接口（interfaces）
 
 由于反射是建立在类型系统(type system)上的，所以我们先来复习一下Go语言中的类型。
 
-Go是一门静态类型的语言。每个变量都有一个静态类型，类型在编译的时后被知晓并确定了下来。
+Go是一门静态类型的语言。每个变量都有一个静态类型，在编译时每个类型都明确并固定下来，例如：int, float32, *MyType, []byte 等。如果我们声明
 ```Go
 type MyInt int
 
 var i int
 var j MyInt
 ```
-变量`i`的类型是`int`，变量`j`的类型是`MyInt`。虽然它们有着相同的基本类型，但静态类型却不一样，在没有类型转换的情况下，它们之间无法互相赋值。
+则变量`i`的类型是`int`，变量`j`的类型是`MyInt`。虽然它们有着相同的基本类型，但静态类型却不一样，在没有类型转换的情况下，它们之间无法互相赋值。
 
-接口是一个重要的类型，它意味着一个确定的的方法集合。一个接口变量可以存储任何实现了接口的方法的具体值(除了接口本身)。一个著名的例子就是`io.Reader`和`io.Writer`：
+接口是一种重要的类型，它意味着一个确定的的方法集合。一个接口变量可以存储任何实现了接口的方法的具体值(非接口)。一个著名的例子就是`io.Reader`和`io.Writer`，来自  (官方io库)[http://golang.org/pkg/io/]的 Reader 、 Writer 类型：
 ```Go
 // Reader is the interface that wraps the basic Read method.
 type Reader interface {
@@ -36,7 +36,7 @@ type Writer interface {
 }
 ```
 
-如果一个类型声明实现了`Reader`（或`Writer`）方法，那么它便实现了`io.Reader`（或`io.Writer`）。这意味着一个`io.Reader`的变量可以持有任何一个实现了`Read`方法的的类型的值。
+只要一个类型实现了同上一样的`Reader`（或`Writer`）方法，那么它便实现了`io.Reader`（或`io.Writer`）。这意味着一个`io.Reader`的变量可以持有任何一个实现了`Read`方法的的类型的值。
 
 ```Go
 var r io.Reader
@@ -51,15 +51,18 @@ r = new(bytes.Buffer)
 ```Go
 interface{}
 ```
-它表示了一个空的方法集，一切值都可以满足它，因为它们都有零值或方法。
+它表示了一个空的方法集，所以一切值都可以满足它，因为它们都有零个以上的方法。
 
-有人说Go的接口是动态类型，这是错误的。它们都是静态类型：虽然在运行时中，接口变量存储的值也许会变，但接口变量的类型是永不会变的。我们必须精确地了解这些，因为反射与接口是密切相关的。
+有人说Go的接口是动态类型，这是错误的。它们都是静态类型：接口类型的变量始终是同一个静态类型，虽然在运行时中接口变量存储的值也许会改变类型，但它的值也是始终满足接口的。
+
+我们必须精确地了解这些，因为反射与接口是密切相关的。
 
 
-##深入接口
+## 接口的意义
 
-Russ Cox在博客里写了一篇[详细的文章](http://research.swtch.com/2009/12/go-data-structures-interfaces.html)，讲述了Go中的接口变量的意义。我们不需要列出全文，只需在这里给出一点点总结。
->一个接口类型的变量里有两样东西：变量的的具体值和这个值的类型描述。更准确地来讲，这个实现了接口的值是一个基础的具体数据项，而类型描述了数据项里的所有类型。
+Russ Cox在博客里写了一篇[详细的文章](http://research.swtch.com/2009/12/go-data-structures-interfaces.html)，讲述了Go中的接口变量的意义。这里不再赘述，简单总结一下。
+
+> 一个接口类型的变量里有两样东西：赋给变量的的具体值和这个值的类型描述符。更准确地来讲，他的值是实现了接口的基本具体数据项，而他的类型则描述了这个数据项的完整类型。
 
 如下所示：
 ```Go
@@ -70,7 +73,7 @@ if err != nil {
 }
 r = tty
 ```
-在此之后，`r`包含了`(value, type)`组合，`(tty,  *os.File)`。值得注意的是，`*os.File`实现了`Read`以外的方法；虽然接口值只提供了`Read`方法，但它内置了所有的类型信息，这就是为什么我们可以么做：
+在此之后，`r`包含了`(value, type)`组合，`(tty,  *os.File)`。值得注意的是，`*os.File`实现了`Read`以外的方法；虽然接口值只提供了`Read`方法，但它内置了所有的类型信息，这就是为什么我们可以这么做：
 ```Go
 var w io.Writer
 w = r.(io.Writer)
@@ -84,16 +87,19 @@ empty = w
 ```
 我们的空接口变量将会在此包含同样的“组合”：`(tty, *os.File)`。这非常方便：一个空接口可以包含任何值和它的类型信息，我们可以在任何需要的时候了解它。
 
-（在这里我们无需类型断言是因为`w`已经满足了空接口。在前面的例子中我们将一个值从一个`Reader`传到了`Writer`，因为`Writer`不是`Reader`的子集，所以我们需要使用类型断言。）
+（在这里我们无需类型断言是因为`w`已经满足了空接口。在前面的例子中我们将一个值从一个`Reader`传到了`Writer`，因为`Writer`的方法集不是`Reader`的子集，所以我们需要使用类型断言。）
 
-这里有一个重要细节：接口里“组合”的格式永远是（值，实体类型），而不是（值，接口类型）。接口不会包含接口值。
+这里有一个重要细节：接口里“组合”的格式永远是（值，实体类型），而不是（值，接口类型）。接口里不能包含接口类型的值。
 
 好了，现在让我们进入反射部分。
 
 
-##反射规则（一） - 从接口到反射对象
+##反射法则一 - 可以从接口变成反射对象
 
-在基础上，反射是一个审查在接口变量中的`(type, value)`组合的机制。现在，我们需要了解[reflect包](https://gowalker.org/reflect)中的两个类型：`Type`和`Value`，可以让我们访问接口变量的内容。`reflect.TypeOf`函数和`reflect.ValueOf`函数返回的`reflect.Type`和`reflect.Value`可以拼凑出一个接口值。（当然，从`reflect.Value`可以很轻易地得到`reflect.Type`，但现在还是让我们把`Value`和`Type`的概念分开来看。）
+在基础上，反射是一个检查在接口变量中的`(type, value)`组合的机制。现在，我们需要了解[reflect包](https://gowalker.org/reflect)中的两个类型和两个函数：
+
+`Type`和`Value`，可以让我们访问接口变量的内容。
+`reflect.TypeOf`函数和`reflect.ValueOf`函数返回的`reflect.Type`和`reflect.Value`可以拼凑出一个接口值。（当然，从`reflect.Value`可以很轻易地得到`reflect.Type`，但现在还是让我们把`Value`和`Type`的概念分开来看。）
 
 我们从`TypeOf`开始：
 ```Go
@@ -114,25 +120,26 @@ func main() {
 type: float64
 ```
 
-看了这段代码你也许会想“接口在哪？”，这段程序里只有`float64`的变量`x`，并没有接口变量传进`reflect.TypeOf`。其实它是在这儿：在[godoc reports](https://gowalker.org/reflect/#TypeOf)的`reflect.TypeOf`的声明中包含了一个空接口：
+看了这段代码你也许会想“这里没有接口啊？”，这段程序里看起来只有`float64`类型的变量`x`，并没有接口变量传进`reflect.TypeOf`。但他就在那：根据Go手册的说明[godoc reports](https://gowalker.org/reflect/#TypeOf)，`reflect.TypeOf`函数要传入一个空接口类型的数据：
 ```Go
 // TypeOf returns the reflection Type of the value in the interface{}.
 func TypeOf(i interface{}) Type
 ```
 
-当我们调用`reflect.TypeOf(x)`时，作为参数传入的`x`在此之前已被存进了一个空接口。而`reflect.TypeOf`解包了空接口，恢复了它所含的类型信息。
+当我们调用`reflect.TypeOf(x)`时，`x`在作为参数传入时已被存进了一个空接口。而`reflect.TypeOf`解包了空接口的数据，还原了它的类型信息。
 
-相对的，`reflect.ValueOf`函数则是恢复了值（从这里开始我们将修改例子并且只关注于可执行代码）：
+同理`reflect.ValueOf`函数用于还原值（从这里开始我们将修改例子并且只关注于可执行代码）：
 ```Go
 var x float64 = 3.4
-fmt.Println("value:", reflect.ValueOf(x))
+fmt.Println("value:", reflect.ValueOf(x).String())
 ```
 打印：
 ```Go
 value: <float64 Value>
 ```
+（我们又调用了`String`方法，因为`fmt`默认会输出`reflect.Value`中包含的值，而`String`方法不会。）
 
-`reflect.Type`和`reflect.Value`拥有许多方法让我们可以审查和操作接口变量。一个重要的例子就是`Value`有一个`Type`方法返回`reflect.Value`的`Type`。另一个例子就是，`Type`和`Value`都有`Kind`方法，它返回一个常量，这个常量表示了被存储的元素的排列顺序：`Uint, Float64, Slice`等等。并且，`Value`的一系列方法（如`Int`或`Float`），能让我们获取被存储的值（如`int64`或`float64`）:
+`reflect.Type`和`reflect.Value`本身提供了许多方法供我们做检查和操作。一个重要的例子就是`Value`的`Type`方法返回`reflect.Value`的`Type`。另一个例子就是，`Type`和`Value`都有`Kind`方法，它返回一个常量，这个常量表示了被存储的元素的排列顺序：`Uint, Float64, Slice`等等。并且，`Value`的一系列方法（如`Int`或`Float`），能让我们获取被存储的值（以`int64`或`float64`的类型）:
 ```Go
 var x float64 = 3.4
 v := reflect.ValueOf(x)
@@ -149,7 +156,9 @@ value: 3.4
 
 有一些方法如`SetInt`和`SetFloat`涉及到了“可设置”(settability)的概念，这是反射规则的第三条，我们将在后面讨论。
 
-反射库有两个特性是需要指出的。其一，为了保持API的简洁，`Value`的Getter和Setter方法是用最大的类型去操作数据：例如让所有的整型都使用`int64`表示。所以，`Value`的`Int`方法返回一个`int64`的值，`SetInt`需要传入`int64`参数；将数值转换成它的实际类型在某些时候是有必要的：
+反射库有两个特性是需要指出的。
+
+特性一，为了保持API的简洁，`Value`的Getter和Setter方法是用最大的类型去操作数据：例如让所有的整型都使用`int64`表示。所以，`Value`的`Int`方法返回一个`int64`的值，`SetInt`需要传入`int64`参数；将数值转换成它的实际类型在某些时候是有必要的：
 ```Go
 var x uint8 = 'x'
 v := reflect.ValueOf(x)
@@ -158,20 +167,20 @@ fmt.Println("kind is uint8: ", v.Kind() == reflect.Uint8) // true.
 x = uint8(v.Uint())                                       // v.Uint returns a uint64.
 ```
 
-其二，反射对象的`Kind`方法描述的是基础类型，而不是静态类型。如果一个反射对象包含了用户定义类型的值，如下：
+特性二，反射对象的`Kind`方法描述的是基础类型，而不是静态类型。如果一个反射对象包含了用户定义类型的值，如下：
 ```Go
 type MyInt int
 var x MyInt = 7
 v := reflect.ValueOf(x)
 ```
-虽然`x`的静态类型是`MyInt`而非`int`，但`v`的`Kind`依然是`reflect.Int`。虽然`Type`可以区分开`int`和`MyInt`，但`Kind`无法做到。
+虽然`x`的静态类型是`MyInt`而非`int`，但`v`的`Kind`依然是`reflect.Int`。换句话说，`Type`可以区分开`int`和`MyInt`，但`Kind`无法做到。
 
 
-##反射规则（二） - 从反射对象到接口
+##反射法则二 - 可以从反射对象变成接口
 
-如同物理学中的反射一样，Go语言的反射也是可逆的。
+如同物理学中的反射一样，Go语言的反射也可以反射自身。
 
-通过一个`reflect.Value`我们可以使用`Interface`方法恢复一个接口；这个方法将类型和值信息打包成一个接口并将其返回：
+我们可以通过一个`reflect.Value`的`Interface`方法还原回一个接口数据；这个方法将类型和值信息打包成一个接口并将其返回：
 ```Go
 // Interface returns v's value as an interface{}.
 func (v Value) Interface() interface{}
@@ -200,13 +209,13 @@ fmt.Printf("value is %7.1e\n", v.Interface())
 
 在这里我们无需对`v.Interface()`做类型断言，这个空接口值包含了具体的值的类型信息，`Printf`会恢复它。
 
-简而言之，`Interface`方法就是`ValueOf`函数的逆，除非`ValueOf`所得结果的类型是`interface{}`
+简而言之，除了他所得结果的类型始终是`interface{}`之外，可以认为`Interface`方法就是`ValueOf`函数的反函数。
 
-重申一遍：反射从接口中来，经过反射对象，又回到了接口中去。
+重申一遍：反射从接口数据而来，变成反射对象，又能反射回接口数据。
 (Reflection goes from interface values to reflection objects and back again.)
 
 
-##反射规则（三） - 若要修改反射对象，值必须可设置
+##反射法则三 - 若要修改反射对象，他的值必须可设置
 
 第三条规则是最微妙同时也是最混乱的，但如果我们从它的基本原理开始，那么一切都不在话下。
 
@@ -220,7 +229,7 @@ v.SetFloat(7.1) // Error: will panic.
 ```Go
 panic: reflect.Value.SetFloat using unaddressable value
 ```
-问题在于`7.1`是不可寻址的，这意味着`v`就会变得不可设置。“可设置”(settability)是`reflect.Value`的特性之一，但并非所有的`Value`都是可设置的。
+问题不在于`7.1`是不可寻址的，而是`v`不可设置。“可设置”(settability)是`reflect.Value`的特性之一，但并非所有的`Value`都是可设置的。
 
 `Value`的`CanSet`方法返回一个布尔值，表示这个`Value`是否可设置：
 ```Go
@@ -343,11 +352,11 @@ t is now {77 Sunset Strip}
 
 ##结论
 再次列出反射法则：
-* 反射从接口值到反射对象中(Reflection goes from interface value to reflection object.)
-* 反射从反射对象到接口值中(Reflection goes from reflection object to interface value.)
+* 反射可以从接口值到反射对象中(Reflection goes from interface value to reflection object.)
+* 反射可以从反射对象到接口值中(Reflection goes from reflection object to interface value.)
 * 要修改反射对象，值必须是“可设置”的(To modify a reflection object, the value must be settable.)
 
-一旦你了解反射法则，Go就会变得更加得心应手（虽然它仍旧微妙）。这是一个强大的工具，除非在绝对必要的时候，我们应该谨慎并避免使用它。
+一旦你理解了Go的反射法则，就会变得更加得心应手（虽然它仍旧微妙）。这是一个强大的工具，用的时候小心一些，除非必要尽量少用。
 
 我们还有非常多的反射知识没有提及——chan的发送和接收，内存分配，使用slice和map，调用方法和函数——但是这篇文章已足够长了。我们将在以后的文章中涉及这些。
 
